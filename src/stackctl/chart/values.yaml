@@ -1,0 +1,11 @@
+# Filled by stackctl (see stackctl/k8s.py: K8sRunner.values); defaults only for `helm lint`.
+stack: app
+filesDir: /app
+nodePort: false
+secretEnv: {}
+secretFiles: {}
+services: []
+volumeClaims: []
+jobs: []
+ingress:
+  enabled: false

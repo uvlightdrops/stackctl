@@ -1,0 +1,5 @@
+apiVersion: v2
+name: stackctl-app
+description: Generic chart rendered by stackctl from a project's stack spec (no project-specific content)
+type: application
+version: 0.1.0

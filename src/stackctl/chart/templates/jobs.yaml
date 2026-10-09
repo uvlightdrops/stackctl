@@ -1,0 +1,32 @@
+{{- range $job := .Values.jobs }}
+{{- $ctx := dict "root" $ "name" $job.name "item" (merge (dict "volumes" (list)) $job) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # one job per release revision (jobs are immutable); finished jobs are cleaned up
+  name: {{ $job.name }}-{{ $.Release.Revision }}
+  labels: {{- include "stackctl.labels" $ctx | nindent 4 }}
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: {{- include "stackctl.labels" $ctx | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      enableServiceLinks: false
+      containers:
+        - name: job
+          image: {{ $job.image }}
+          imagePullPolicy: IfNotPresent
+          command: {{- toYaml $job.command | nindent 12 }}
+          {{- include "stackctl.containerEnv" $ctx | nindent 10 }}
+          {{- include "stackctl.mounts" $ctx | nindent 10 }}
+      {{- if and $job.secretFiles $.Values.secretFiles }}
+      volumes:
+        - name: secret-files
+          secret:
+            secretName: {{ $.Release.Name }}-files
+      {{- end }}
+{{- end }}

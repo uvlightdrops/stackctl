@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stackctl"
+version = "0.1.0"
+description = "Project-agnostic start/stop/deploy for small service stacks: local processes, docker compose, minikube and Kubernetes (Helm)"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+stackctl = "stackctl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+stackctl = ["chart/*.yaml", "chart/templates/*"]

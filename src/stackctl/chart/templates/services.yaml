@@ -1,0 +1,104 @@
+{{- range .Values.volumeClaims }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .name }}
+  labels: {{- include "stackctl.labels" (dict "root" $) | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep  # data survives `stackctl stop`; `stackctl delete` removes it
+spec:
+  accessModes: [ReadWriteOnce]  # shared claims: all pods on one node (minikube, single-node k8s)
+  resources:
+    requests:
+      storage: {{ .size }}
+{{- end }}
+{{- range $svc := .Values.services }}
+{{- $ctx := dict "root" $ "name" $svc.name "item" $svc }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svc.name }}
+  labels: {{- include "stackctl.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  {{- if $svc.volumes }}
+  strategy:
+    type: Recreate  # ReadWriteOnce volumes
+  {{- end }}
+  selector:
+    matchLabels: {{- include "stackctl.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "stackctl.labels" $ctx | nindent 8 }}
+        app.kubernetes.io/name: {{ $svc.name }}
+      annotations:
+        stackctl/config-hash: {{ printf "%v%v" $.Values.secretEnv $.Values.secretFiles | sha256sum | trunc 16 }}
+    spec:
+      enableServiceLinks: false  # no FOO_PORT=tcp://… variables clashing with app settings
+      {{- if $svc.initCommand }}
+      initContainers:
+        - name: init
+          image: {{ $svc.image }}
+          imagePullPolicy: IfNotPresent
+          command: {{- toYaml $svc.initCommand | nindent 12 }}
+          {{- include "stackctl.containerEnv" $ctx | nindent 10 }}
+          {{- include "stackctl.mounts" $ctx | nindent 10 }}
+      {{- end }}
+      containers:
+        - name: {{ $svc.name }}
+          image: {{ $svc.image }}
+          imagePullPolicy: IfNotPresent
+          {{- with $svc.command }}
+          command: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- include "stackctl.containerEnv" $ctx | nindent 10 }}
+          {{- include "stackctl.mounts" $ctx | nindent 10 }}
+          {{- if $svc.port }}
+          ports:
+            - containerPort: {{ $svc.port }}
+          readinessProbe:
+            {{- if $svc.probePath }}
+            httpGet:
+              path: {{ $svc.probePath }}
+              port: {{ $svc.port }}
+            {{- else }}
+            tcpSocket:
+              port: {{ $svc.port }}
+            {{- end }}
+            periodSeconds: 5
+            failureThreshold: 60
+          {{- end }}
+          {{- with $svc.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- if or $svc.volumes (and $svc.secretFiles $.Values.secretFiles) }}
+      volumes:
+        {{- range $svc.volumes }}
+        - name: {{ .name }}
+          persistentVolumeClaim:
+            claimName: {{ .claim }}
+        {{- end }}
+        {{- if and $svc.secretFiles $.Values.secretFiles }}
+        - name: secret-files
+          secret:
+            secretName: {{ $.Release.Name }}-files
+        {{- end }}
+      {{- end }}
+{{- if $svc.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc.name }}
+  labels: {{- include "stackctl.labels" $ctx | nindent 4 }}
+spec:
+  type: {{ if and $svc.expose $.Values.nodePort }}NodePort{{ else }}ClusterIP{{ end }}
+  selector: {{- include "stackctl.selector" $ctx | nindent 4 }}
+  ports:
+    - port: {{ $svc.port }}
+      targetPort: {{ $svc.port }}
+{{- end }}
+{{- end }}
