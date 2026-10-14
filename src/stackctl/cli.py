@@ -13,10 +13,10 @@ import yaml
 
 from .install import install
 from .local import LocalRunner
-from .repo_status import repo_pull, repo_status
+from .repo_status import repo_pull, repo_push, repo_status
 from .spec import TARGETS, SpecError, build_stack, find_project, load_raw_spec
 
-ACTIONS = ("status", "start", "stop", "restart", "logs", "install", "delete", "spec", "repo-status", "pull")
+ACTIONS = ("status", "start", "stop", "restart", "logs", "install", "delete", "spec", "repo-status", "pull", "push")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
             return repo_status(project)
         if args.action == "pull":
             return repo_pull(project)
+        if args.action == "push":
+            return repo_push(project)
         stack = build_stack(load_raw_spec(project), project.root, args.target)
         if args.action == "spec":
             print(yaml.safe_dump({"target": stack.target, "services": {n: vars(s) for n, s in stack.services.items()},

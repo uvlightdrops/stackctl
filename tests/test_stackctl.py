@@ -289,3 +289,65 @@ def test_repo_status_uses_optional_sibling_path(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "yaml-cfg-wizard" in out
     assert str(sibling) in out
+
+
+def test_push_updates_only_clean_repos_that_are_ahead(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(dedent("""
+        [tool.stackctl]
+        spec_file = "stack.yaml"
+
+        [[tool.stackctl.siblings]]
+        name = "ki-core"
+
+        [[tool.stackctl.siblings]]
+        name = "ki-web"
+    """).strip() + "\n")
+    (root / "stack.yaml").write_text("stack:\n  services:\n    api:\n      command: ['python', '-V']\n")
+    sibling1 = tmp_path / "ki-core"
+    sibling2 = tmp_path / "ki-web"
+    sibling1.mkdir()
+    sibling2.mkdir()
+    for path in (root, sibling1, sibling2):
+        (path / ".git").mkdir()
+    monkeypatch.chdir(root)
+
+    state = {
+        root: {"branch": "devel", "head": "aaa1111", "upstream": "origin/devel", "remote": "aaa1111", "ahead": 2,
+               "behind": 0, "dirty": False},
+        sibling1: {"branch": "feature/x", "head": "ccc3333", "upstream": "origin/feature/x", "remote": "ddd4444",
+                   "ahead": 1, "behind": 1, "dirty": False},
+        sibling2: {"branch": "main", "head": "eee5555", "upstream": "origin/main", "remote": "eee5555", "ahead": 0,
+                   "behind": 0, "dirty": False},
+    }
+    pushes = []
+
+    def fake_run(command, cwd=None, capture_output=False, text=False):
+        repo = state[cwd]
+        if command[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[:2] == ["git", "push"]:
+            pushes.append(cwd)
+            repo["ahead"] = 0
+            return subprocess.CompletedProcess(command, 0, "pushed\n", "")
+        outputs = {
+            ("git", "rev-parse", "--abbrev-ref", "HEAD"): f"{repo['branch']}\n",
+            ("git", "rev-parse", "--short", "HEAD"): f"{repo['head']}\n",
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): f"{repo['upstream']}\n",
+            ("git", "rev-parse", "--short", "@{upstream}"): f"{repo['remote']}\n",
+            ("git", "rev-list", "--left-right", "--count", f"HEAD...{repo['upstream']}"): f"{repo['ahead']} {repo['behind']}\n",
+            ("git", "status", "--short"): "",
+        }
+        return subprocess.CompletedProcess(command, 0, outputs[tuple(command)], "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["push"]) == 1
+    out = capsys.readouterr().out
+    assert pushes == [root]
+    assert "demo: gepusht" in out
+    assert "ki-core: übersprungen (1 hinterher)" in out
+    assert "ki-web: nichts zu pushen" in out
+    assert "ok" in out
+    assert "behind" in out

@@ -20,6 +20,7 @@ stackctl install                   # Geschwister-Repos klonen + editable install
 stackctl spec                      # aufgelöste Spec anzeigen
 stackctl repo-status               # Hauptprojekt + siblings: Branch, Commits, ahead/behind, dirty
 stackctl pull                      # zieht veraltete Repos auf ihrem aktuellen Branch per ff-only nach
+stackctl push                      # pusht saubere Repos, die lokal voraus sind
 ```
 
 Installation als User-Tool:
@@ -53,6 +54,8 @@ path = "yaml_cfg_wizard"          # Ordnername unter src_dir, falls abweichend
 `stackctl repo-status` prüft das aktuelle Projekt und alle `siblings`. Dafür wird pro Repo `git fetch --all --prune` ausgeführt; die Ausgabe zeigt lokalen Branch, `HEAD`, Upstream, Remote-Commit, ahead/behind und ob das Worktree dirty ist. Damit sieht man schnell, ob zwei Hosts denselben Stand haben oder welche Repos nachgezogen werden müssen.
 
 `stackctl pull` verwendet **nicht** einen fest konfigurierten Branch, sondern den **aktuell ausgecheckten Branch jedes Repos**. Repos mit `dirty`-Worktree oder ohne konfigurierten Upstream werden übersprungen. Für Updates nutzt stackctl `git pull --ff-only`, damit keine impliziten Merge-Commits entstehen.
+
+`stackctl push` arbeitet ebenso auf dem **aktuell ausgecheckten Branch**. Gepusht werden nur Repos, die **clean** sind, einen **Upstream** haben und **lokal voraus** sind. Repos, die noch `behind` sind oder gleichzeitig vor und hinter dem Remote liegen, werden übersprungen.
 
 Am besten liefert der `config_loader` die Spec aus dem gemeinsamen Konfigurationsbaum, bei ki-core über `config/defaults/stack.yaml`. Dann gelten Stages und ENV-Overrides auch für den Stack, z.B. `KI_CFG_STACK__SERVICES__DJANGO__PORT=8011`.
 

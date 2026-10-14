@@ -57,6 +57,38 @@ def repo_pull(project: Project) -> int:
     return code
 
 
+def repo_push(project: Project) -> int:
+    rows = collect_repos(project)
+    changed = False
+    code = 0
+    for row in rows:
+        if row.error:
+            code = 1
+            continue
+        if row.dirty:
+            print(f"{row.name}: übersprungen (dirty)")
+            code = 1
+            continue
+        if row.upstream == "-":
+            print(f"{row.name}: übersprungen (kein upstream für Branch {row.branch})")
+            code = 1
+            continue
+        if row.behind > 0:
+            print(f"{row.name}: übersprungen ({row.behind} hinterher)")
+            code = 1
+            continue
+        if row.ahead == 0:
+            print(f"{row.name}: nichts zu pushen ({row.branch} {row.head})")
+            continue
+        _git(row.path, "push")
+        changed = True
+        print(f"{row.name}: gepusht ({row.branch}, war {row.ahead} voraus)")
+    if changed:
+        print()
+    _print(collect_repos(project))
+    return code
+
+
 def collect_repos(project: Project) -> list[RepoStatus]:
     rows = [_collect(project.root.name, project.root)]
     rows.extend(_collect(sibling.name, project.sibling_path(sibling)) for sibling in project.siblings)
