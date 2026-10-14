@@ -44,6 +44,10 @@ config_key = "stack"                     # Abschnitt mit der Spec
 name = "ki-core"
 url = "https://github.com/org/ki-core.git"
 # branch = "devel"                # optional: nur für stackctl install / git clone
+
+[[tool.stackctl.siblings]]
+name = "yaml-cfg-wizard"          # Anzeigename / Repo-Gruppe
+path = "yaml_cfg_wizard"          # Ordnername unter src_dir, falls abweichend
 ```
 
 `stackctl repo-status` prüft das aktuelle Projekt und alle `siblings`. Dafür wird pro Repo `git fetch --all --prune` ausgeführt; die Ausgabe zeigt lokalen Branch, `HEAD`, Upstream, Remote-Commit, ahead/behind und ob das Worktree dirty ist. Damit sieht man schnell, ob zwei Hosts denselben Stand haben oder welche Repos nachgezogen werden müssen.

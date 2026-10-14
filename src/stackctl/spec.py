@@ -47,6 +47,7 @@ class SpecError(ValueError):
 @dataclass(frozen=True)
 class Sibling:
     name: str
+    path: str = ""
     url: str = ""
     branch: str = ""
 
@@ -65,7 +66,7 @@ class Project:
         return Path(os.getenv("STACKCTL_SRC_DIR") or self.tool.get("src_dir") or self.root.parent).expanduser()
 
     def sibling_path(self, sibling: Sibling) -> Path:
-        return self.src_dir / sibling.name
+        return self.src_dir / (sibling.path or sibling.name)
 
 
 def find_project(start: Path | None = None) -> Project:

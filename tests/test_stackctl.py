@@ -250,3 +250,42 @@ def test_pull_updates_only_clean_repos_that_are_behind(tmp_path, monkeypatch, ca
     assert "bbb2222" in out
     assert "ok" in out
     assert "dirty" in out
+
+
+def test_repo_status_uses_optional_sibling_path(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(dedent("""
+        [tool.stackctl]
+        spec_file = "stack.yaml"
+
+        [[tool.stackctl.siblings]]
+        name = "yaml-cfg-wizard"
+        path = "yaml_cfg_wizard"
+    """).strip() + "\n")
+    (root / "stack.yaml").write_text("stack:\n  services:\n    api:\n      command: ['python', '-V']\n")
+    sibling = tmp_path / "yaml_cfg_wizard"
+    sibling.mkdir()
+    (root / ".git").mkdir()
+    (sibling / ".git").mkdir()
+    monkeypatch.chdir(root)
+
+    def fake_run(command, cwd=None, capture_output=False, text=False):
+        if command[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        outputs = {
+            ("git", "rev-parse", "--abbrev-ref", "HEAD"): "main\n",
+            ("git", "rev-parse", "--short", "HEAD"): "abc1234\n",
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/main\n",
+            ("git", "rev-parse", "--short", "@{upstream}"): "def5678\n",
+            ("git", "rev-list", "--left-right", "--count", "HEAD...origin/main"): "0 0\n",
+            ("git", "status", "--short"): "",
+        }
+        return subprocess.CompletedProcess(command, 0, outputs[tuple(command)], "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["repo-status"]) == 0
+    out = capsys.readouterr().out
+    assert "yaml-cfg-wizard" in out
+    assert str(sibling) in out
