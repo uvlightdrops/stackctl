@@ -22,6 +22,14 @@ stackctl repo-status               # Hauptprojekt + siblings: Branch, Commits, a
 stackctl pull                      # zieht veraltete Repos auf ihrem aktuellen Branch per ff-only nach
 ```
 
+Installation als User-Tool:
+
+```bash
+./scripts/install-user.sh
+```
+
+Das Skript legt eine eigene venv unter `~/.local/share/stackctl/venv` an, installiert `stackctl` per `pip install -e` und verlinkt das Executable nach `~/.local/bin/stackctl`. Abweichende Pfade lassen sich über `STACKCTL_VENV_DIR` und `STACKCTL_BIN_DIR` setzen.
+
 ## Einbindung ins Projekt (`pyproject.toml`)
 
 ```toml
