@@ -18,6 +18,8 @@ stackctl -t k8s start              # Images in die Registry pushen, dann deploye
 stackctl -t minikube delete        # Release und Namespace entfernen (PVCs gehen mit dem Namespace)
 stackctl install                   # Geschwister-Repos klonen + editable installieren, dann das Projekt
 stackctl spec                      # aufgelöste Spec anzeigen
+stackctl repo-status               # Hauptprojekt + siblings: Branch, Commits, ahead/behind, dirty
+stackctl pull                      # zieht veraltete Repos auf ihrem aktuellen Branch per ff-only nach
 ```
 
 ## Einbindung ins Projekt (`pyproject.toml`)
@@ -33,8 +35,12 @@ config_key = "stack"                     # Abschnitt mit der Spec
 [[tool.stackctl.siblings]]
 name = "ki-core"
 url = "https://github.com/org/ki-core.git"
-branch = "devel"
+# branch = "devel"                # optional: nur für stackctl install / git clone
 ```
+
+`stackctl repo-status` prüft das aktuelle Projekt und alle `siblings`. Dafür wird pro Repo `git fetch --all --prune` ausgeführt; die Ausgabe zeigt lokalen Branch, `HEAD`, Upstream, Remote-Commit, ahead/behind und ob das Worktree dirty ist. Damit sieht man schnell, ob zwei Hosts denselben Stand haben oder welche Repos nachgezogen werden müssen.
+
+`stackctl pull` verwendet **nicht** einen fest konfigurierten Branch, sondern den **aktuell ausgecheckten Branch jedes Repos**. Repos mit `dirty`-Worktree oder ohne konfigurierten Upstream werden übersprungen. Für Updates nutzt stackctl `git pull --ff-only`, damit keine impliziten Merge-Commits entstehen.
 
 Am besten liefert der `config_loader` die Spec aus dem gemeinsamen Konfigurationsbaum, bei ki-core über `config/defaults/stack.yaml`. Dann gelten Stages und ENV-Overrides auch für den Stack, z.B. `KI_CFG_STACK__SERVICES__DJANGO__PORT=8011`.
 

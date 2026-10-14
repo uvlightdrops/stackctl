@@ -2,10 +2,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 import yaml
 
+from stackctl.cli import main
 from stackctl.k8s import CHART_DIR, K8sRunner
 from stackctl.spec import Project, SpecError, build_stack, deep_merge
 
@@ -117,3 +119,134 @@ def test_chart_renders(tmp_path):
     assert ("Deployment", "web") in kinds and ("PersistentVolumeClaim", "data") in kinds
     assert ("Secret", "demo-env") in kinds and ("Secret", "demo-files") in kinds
     assert any(kind == "Job" for kind, _ in kinds)
+
+
+def test_repo_status_lists_project_and_siblings(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(dedent("""
+        [tool.stackctl]
+        spec_file = "stack.yaml"
+
+        [[tool.stackctl.siblings]]
+        name = "ki-core"
+    """).strip() + "\n")
+    (root / "stack.yaml").write_text("stack:\n  services:\n    api:\n      command: ['python', '-V']\n")
+
+    sibling = tmp_path / "ki-core"
+    sibling.mkdir()
+    (root / ".git").mkdir()
+    (sibling / ".git").mkdir()
+    monkeypatch.chdir(root)
+
+    calls = []
+
+    def fake_run(command, cwd=None, capture_output=False, text=False):
+        calls.append((tuple(command), cwd))
+        if command[:2] != ["git", "fetch"] and cwd == root:
+            outputs = {
+                ("git", "rev-parse", "--abbrev-ref", "HEAD"): "devel\n",
+                ("git", "rev-parse", "--short", "HEAD"): "abc1234\n",
+                ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/devel\n",
+                ("git", "rev-parse", "--short", "@{upstream}"): "fff9999\n",
+                ("git", "rev-list", "--left-right", "--count", "HEAD...origin/devel"): "0 0\n",
+                ("git", "status", "--short"): "",
+            }
+            return subprocess.CompletedProcess(command, 0, outputs[tuple(command)], "")
+        if command[:2] != ["git", "fetch"] and cwd == sibling:
+            outputs = {
+                ("git", "rev-parse", "--abbrev-ref", "HEAD"): "main\n",
+                ("git", "rev-parse", "--short", "HEAD"): "def5678\n",
+                ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/main\n",
+                ("git", "rev-parse", "--short", "@{upstream}"): "fff9999\n",
+                ("git", "rev-list", "--left-right", "--count", "HEAD...origin/main"): "1 2\n",
+                ("git", "status", "--short"): " M src/module.py\n",
+            }
+            return subprocess.CompletedProcess(command, 0, outputs[tuple(command)], "")
+        if command[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        raise AssertionError(f"unexpected command: {command} cwd={cwd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["repo-status"]) == 0
+    out = capsys.readouterr().out
+    assert "demo" in out
+    assert "ki-core" in out
+    assert "abc1234" in out
+    assert "def5678" in out
+    assert "origin/devel" in out
+    assert "origin/main" in out
+    assert "0/0" in out
+    assert "1/2" in out
+    assert "yes" in out
+    assert "dirty" in out
+    assert "ok" in out
+    assert [cmd for cmd, cwd in calls if cmd[:2] == ("git", "fetch")] == [
+        ("git", "fetch", "--quiet", "--all", "--prune"),
+        ("git", "fetch", "--quiet", "--all", "--prune"),
+    ]
+
+
+def test_pull_updates_only_clean_repos_that_are_behind(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(dedent("""
+        [tool.stackctl]
+        spec_file = "stack.yaml"
+
+        [[tool.stackctl.siblings]]
+        name = "ki-core"
+
+        [[tool.stackctl.siblings]]
+        name = "ki-web"
+    """).strip() + "\n")
+    (root / "stack.yaml").write_text("stack:\n  services:\n    api:\n      command: ['python', '-V']\n")
+    sibling1 = tmp_path / "ki-core"
+    sibling2 = tmp_path / "ki-web"
+    sibling1.mkdir()
+    sibling2.mkdir()
+    for path in (root, sibling1, sibling2):
+        (path / ".git").mkdir()
+    monkeypatch.chdir(root)
+
+    state = {
+        root: {"branch": "devel", "head": "aaa1111", "upstream": "origin/devel", "remote": "bbb2222", "ahead": 0,
+               "behind": 1, "dirty": False},
+        sibling1: {"branch": "feature/x", "head": "ccc3333", "upstream": "origin/feature/x", "remote": "ccc3333",
+                   "ahead": 0, "behind": 0, "dirty": False},
+        sibling2: {"branch": "main", "head": "ddd4444", "upstream": "origin/main", "remote": "eee5555", "ahead": 0,
+                   "behind": 2, "dirty": True},
+    }
+    pulls = []
+
+    def fake_run(command, cwd=None, capture_output=False, text=False):
+        repo = state[cwd]
+        if command[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[:3] == ["git", "pull", "--ff-only"]:
+            pulls.append(cwd)
+            repo["head"] = repo["remote"]
+            repo["behind"] = 0
+            return subprocess.CompletedProcess(command, 0, "updated\n", "")
+        outputs = {
+            ("git", "rev-parse", "--abbrev-ref", "HEAD"): f"{repo['branch']}\n",
+            ("git", "rev-parse", "--short", "HEAD"): f"{repo['head']}\n",
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): f"{repo['upstream']}\n",
+            ("git", "rev-parse", "--short", "@{upstream}"): f"{repo['remote']}\n",
+            ("git", "rev-list", "--left-right", "--count", f"HEAD...{repo['upstream']}"): f"{repo['ahead']} {repo['behind']}\n",
+            ("git", "status", "--short"): " M changed.py\n" if repo["dirty"] else "",
+        }
+        return subprocess.CompletedProcess(command, 0, outputs[tuple(command)], "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["pull"]) == 1
+    out = capsys.readouterr().out
+    assert pulls == [root]
+    assert "demo: aktualisiert" in out
+    assert "ki-core: aktuell" in out
+    assert "ki-web: übersprungen (dirty)" in out
+    assert "bbb2222" in out
+    assert "ok" in out
+    assert "dirty" in out
