@@ -51,7 +51,7 @@ name = "yaml-cfg-wizard"          # Anzeigename / Repo-Gruppe
 path = "yaml_cfg_wizard"          # Ordnername unter src_dir, falls abweichend
 ```
 
-`stackctl repo-status` prüft das aktuelle Projekt und alle `siblings`. Dafür wird pro Repo `git fetch --all --prune` ausgeführt; die Ausgabe zeigt lokalen Branch, `HEAD`, Upstream, Remote-Commit, ahead/behind und ob das Worktree dirty ist. Damit sieht man schnell, ob zwei Hosts denselben Stand haben oder welche Repos nachgezogen werden müssen.
+`stackctl repo-status` prüft das aktuelle Projekt und alle `siblings`. Dafür wird pro Repo `git fetch --all --prune` ausgeführt; die Ausgabe zeigt in einer Tabelle lokalen Branch, `HEAD`, Upstream, Remote-Commit, Ahead/Behind-Commits und ob das Worktree dirty ist. Ein positiver Behind-Wert zeigt, dass im Remote neue Commits vorhanden sind; ein positiver Ahead-Wert zeigt lokale Commits, die noch nicht gepusht wurden.
 
 `stackctl pull` verwendet **nicht** einen fest konfigurierten Branch, sondern den **aktuell ausgecheckten Branch jedes Repos**. Repos mit `dirty`-Worktree oder ohne konfigurierten Upstream werden übersprungen. Für Updates nutzt stackctl `git pull --ff-only`, damit keine impliziten Merge-Commits entstehen.
 

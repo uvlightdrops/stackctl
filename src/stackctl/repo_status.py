@@ -129,7 +129,7 @@ def _git(path: Path, *args: str, check: bool = True) -> str:
 
 
 def _print(rows: list[RepoStatus]) -> None:
-    headers = ("NAME", "BRANCH", "LOCAL", "UPSTREAM", "REMOTE", "A/B", "DIRTY", "STATUS", "PATH")
+    headers = ("NAME", "BRANCH", "LOCAL", "UPSTREAM", "REMOTE", "AHEAD/BEHIND", "DIRTY", "STATUS", "PATH")
     data = [headers]
     for row in rows:
         if row.error:
@@ -149,5 +149,10 @@ def _print(rows: list[RepoStatus]) -> None:
             state = "ok"
         data.append((row.name, row.branch, row.head, row.upstream, row.upstream_head, sync, dirty, state, str(row.path)))
     widths = [max(len(str(line[i])) for line in data) for i in range(len(headers))]
-    for line in data:
-        print("  ".join(str(value).ljust(widths[i]) for i, value in enumerate(line)))
+    border = "+-" + "-+-".join("-" * width for width in widths) + "-+"
+    print(border)
+    for index, line in enumerate(data):
+        print("| " + " | ".join(str(value).ljust(widths[i]) for i, value in enumerate(line)) + " |")
+        if index == 0:
+            print(border)
+    print(border)

@@ -171,6 +171,9 @@ def test_repo_status_lists_project_and_siblings(tmp_path, monkeypatch, capsys):
 
     assert main(["repo-status"]) == 0
     out = capsys.readouterr().out
+    assert "+-" in out
+    assert "| NAME" in out
+    assert "AHEAD/BEHIND" in out
     assert "demo" in out
     assert "ki-core" in out
     assert "abc1234" in out
