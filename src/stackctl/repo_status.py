@@ -31,60 +31,60 @@ def repo_status(project: Project) -> int:
 
 def repo_pull(project: Project) -> int:
     rows = collect_repos(project)
-    changed = False
+    results: list[tuple[str, ...]] = []
     code = 0
     for row in rows:
         if row.error:
+            results.append((row.name, "Fehler", row.error))
             code = 1
             continue
         if row.dirty:
-            print(f"{row.name}: übersprungen (dirty)")
+            results.append((row.name, "übersprungen", "dirty"))
             code = 1
             continue
         if row.upstream == "-":
-            print(f"{row.name}: übersprungen (kein upstream für Branch {row.branch})")
+            results.append((row.name, "übersprungen", f"kein upstream für Branch {row.branch}"))
             code = 1
             continue
         if row.behind == 0:
-            print(f"{row.name}: aktuell ({row.branch} {row.head})")
+            results.append((row.name, "aktuell", f"{row.branch} {row.head}"))
             continue
         _git(row.path, "pull", "--ff-only")
-        changed = True
-        print(f"{row.name}: aktualisiert ({row.branch}, war {row.behind} hinterher)")
-    if changed:
-        print()
+        results.append((row.name, "aktualisiert", f"{row.branch}, war {row.behind} hinterher"))
+    _print_table(("REPOSITORY", "STATUS", "DETAILS"), results)
+    print()
     _print(collect_repos(project))
     return code
 
 
 def repo_push(project: Project) -> int:
     rows = collect_repos(project)
-    changed = False
+    results: list[tuple[str, ...]] = []
     code = 0
     for row in rows:
         if row.error:
+            results.append((row.name, "Fehler", row.error))
             code = 1
             continue
         if row.dirty:
-            print(f"{row.name}: übersprungen (dirty)")
+            results.append((row.name, "übersprungen", "dirty"))
             code = 1
             continue
         if row.upstream == "-":
-            print(f"{row.name}: übersprungen (kein upstream für Branch {row.branch})")
+            results.append((row.name, "übersprungen", f"kein upstream für Branch {row.branch}"))
             code = 1
             continue
         if row.behind > 0:
-            print(f"{row.name}: übersprungen ({row.behind} hinterher)")
+            results.append((row.name, "übersprungen", f"{row.behind} hinterher"))
             code = 1
             continue
         if row.ahead == 0:
-            print(f"{row.name}: nichts zu pushen ({row.branch} {row.head})")
+            results.append((row.name, "nichts zu pushen", f"{row.branch} {row.head}"))
             continue
         _git(row.path, "push")
-        changed = True
-        print(f"{row.name}: gepusht ({row.branch}, war {row.ahead} voraus)")
-    if changed:
-        print()
+        results.append((row.name, "gepusht", f"{row.branch}, war {row.ahead} voraus"))
+    _print_table(("REPOSITORY", "STATUS", "DETAILS"), results)
+    print()
     _print(collect_repos(project))
     return code
 
@@ -130,7 +130,7 @@ def _git(path: Path, *args: str, check: bool = True) -> str:
 
 def _print(rows: list[RepoStatus]) -> None:
     headers = ("NAME", "BRANCH", "LOCAL", "UPSTREAM", "REMOTE", "AHEAD/BEHIND", "DIRTY", "STATUS", "PATH")
-    data = [headers]
+    data: list[tuple[str, ...]] = []
     for row in rows:
         if row.error:
             data.append((row.name, "-", "-", "-", "-", "-", "-", row.error, str(row.path)))
@@ -148,7 +148,12 @@ def _print(rows: list[RepoStatus]) -> None:
         else:
             state = "ok"
         data.append((row.name, row.branch, row.head, row.upstream, row.upstream_head, sync, dirty, state, str(row.path)))
-    widths = [max(len(str(line[i])) for line in data) for i in range(len(headers))]
+    _print_table(headers, data)
+
+
+def _print_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
+    data = [headers, *rows]
+    widths = [max(len(line[i]) for line in data) for i in range(len(headers))]
     border = "+-" + "-+-".join("-" * width for width in widths) + "-+"
     print(border)
     for index, line in enumerate(data):

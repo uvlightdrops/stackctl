@@ -247,9 +247,16 @@ def test_pull_updates_only_clean_repos_that_are_behind(tmp_path, monkeypatch, ca
     assert main(["pull"]) == 1
     out = capsys.readouterr().out
     assert pulls == [root]
-    assert "demo: aktualisiert" in out
-    assert "ki-core: aktuell" in out
-    assert "ki-web: übersprungen (dirty)" in out
+    summary = out.split("\n\n", 1)[0]
+    cells = [tuple(cell.strip() for cell in line.split("|")[1:-1])
+             for line in summary.splitlines() if line.startswith("|")]
+    assert cells == [
+        ("REPOSITORY", "STATUS", "DETAILS"),
+        ("demo", "aktualisiert", "devel, war 1 hinterher"),
+        ("ki-core", "aktuell", "feature/x ccc3333"),
+        ("ki-web", "übersprungen", "dirty"),
+    ]
+    assert len({len(line) for line in summary.splitlines()}) == 1
     assert "bbb2222" in out
     assert "ok" in out
     assert "dirty" in out
@@ -349,8 +356,15 @@ def test_push_updates_only_clean_repos_that_are_ahead(tmp_path, monkeypatch, cap
     assert main(["push"]) == 1
     out = capsys.readouterr().out
     assert pushes == [root]
-    assert "demo: gepusht" in out
-    assert "ki-core: übersprungen (1 hinterher)" in out
-    assert "ki-web: nichts zu pushen" in out
+    summary = out.split("\n\n", 1)[0]
+    cells = [tuple(cell.strip() for cell in line.split("|")[1:-1])
+             for line in summary.splitlines() if line.startswith("|")]
+    assert cells == [
+        ("REPOSITORY", "STATUS", "DETAILS"),
+        ("demo", "gepusht", "devel, war 2 voraus"),
+        ("ki-core", "übersprungen", "1 hinterher"),
+        ("ki-web", "nichts zu pushen", "main eee5555"),
+    ]
+    assert len({len(line) for line in summary.splitlines()}) == 1
     assert "ok" in out
     assert "behind" in out

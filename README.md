@@ -57,6 +57,8 @@ path = "yaml_cfg_wizard"          # Ordnername unter src_dir, falls abweichend
 
 `stackctl push` arbeitet ebenso auf dem **aktuell ausgecheckten Branch**. Gepusht werden nur Repos, die **clean** sind, einen **Upstream** haben und **lokal voraus** sind. Repos, die noch `behind` sind oder gleichzeitig vor und hinter dem Remote liegen, werden übersprungen.
 
+`pull` und `push` zeigen ihre Ergebnisse zuerst als dreispaltige Tabelle (`REPOSITORY | STATUS | DETAILS`): aktualisiert/gepusht, bereits aktuell oder übersprungen mit Begründung. Danach folgt die ausführliche Repo-Status-Tabelle.
+
 Am besten liefert der `config_loader` die Spec aus dem gemeinsamen Konfigurationsbaum, bei ki-core über `config/defaults/stack.yaml`. Dann gelten Stages und ENV-Overrides auch für den Stack, z.B. `KI_CFG_STACK__SERVICES__DJANGO__PORT=8011`.
 
 ## Spec
