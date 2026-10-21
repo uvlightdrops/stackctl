@@ -17,6 +17,7 @@ stackctl -t minikube status        # pods/svc/pvc + URLs
 stackctl -t k8s start              # Images in die Registry pushen, dann deployen
 stackctl -t minikube delete        # Release und Namespace entfernen (PVCs gehen mit dem Namespace)
 stackctl clone                     # fehlende Geschwister-Repos klonen, ohne Installation
+stackctl checkout devel            # Hauptprojekt + siblings auf den Branch devel umstellen
 stackctl install                   # Geschwister-Repos klonen + editable installieren, dann das Projekt
 stackctl spec                      # aufgelöste Spec anzeigen
 stackctl repo-status               # Hauptprojekt + siblings: Branch, Commits, ahead/behind, dirty
@@ -55,6 +56,8 @@ path = "yaml_cfg_wizard"          # Ordnername unter src_dir, falls abweichend
 `stackctl clone` klont alle noch fehlenden `siblings` nach `src_dir` (bzw. `STACKCTL_SRC_DIR`), mit `path` oder sonst `name` als Ordnername. Fehlende Elternverzeichnisse werden angelegt. Die `url` ist nur für fehlende Repos erforderlich; ohne `branch` wird der Standard-Branch des Remotes verwendet. Vorhandene Git-Repos bleiben unverändert: kein Fetch, Pull oder Branchwechsel. Existierende Pfade ohne Git-Repo, fehlende URLs und Git-Fehler werden gemeldet; die übrigen Repos werden trotzdem bearbeitet, der Exit-Code ist dann ungleich null. Der Befehl braucht weder eine aktive venv noch eine ladbare Stack-Konfiguration und installiert keine Pakete. Aufruf im bereits vorhandenen Hauptprojekt mit `[tool.stackctl]` in der `pyproject.toml`.
 
 `stackctl repo-status` prüft das aktuelle Projekt und alle `siblings`. Dafür wird pro Repo `git fetch --all --prune` ausgeführt; die Ausgabe zeigt in einer Tabelle lokalen Branch, `HEAD`, Upstream, Remote-Commit, Ahead/Behind-Commits und ob das Worktree dirty ist. Ein positiver Behind-Wert zeigt, dass im Remote neue Commits vorhanden sind; ein positiver Ahead-Wert zeigt lokale Commits, die noch nicht gepusht wurden.
+
+`stackctl checkout <branch>` wechselt im Hauptprojekt und allen `siblings` auf den angegebenen Branch, unabhängig von `siblings.branch`. Vorher werden die Remote-Refs per Fetch aktualisiert. Existiert der Branch nur auf einem Remote, legt `git switch --guess` einen lokalen Tracking-Branch an; bei mehreren passenden Remotes gelten die Git-Regeln (insbesondere `checkout.defaultRemote`). Repos, die bereits auf dem gewünschten Branch sind, bleiben unverändert. Andere Repos mit lokalen Änderungen (auch ungetrackten Dateien) werden übersprungen; es gibt kein automatisches Stash, Erzwingen oder Zurücksetzen. Fehlende Repos, fehlende/mehrdeutige Branches und Git-Fehler erscheinen in der Ergebnistabelle; die übrigen Repos werden weiterbearbeitet und der Exit-Code ist bei Fehlern oder übersprungenen Repos ungleich null. Der Befehl benötigt keine ladbare Stack-Konfiguration und führt keinen Pull aus.
 
 `stackctl pull` verwendet **nicht** einen fest konfigurierten Branch, sondern den **aktuell ausgecheckten Branch jedes Repos**. Repos mit `dirty`-Worktree oder ohne konfigurierten Upstream werden übersprungen. Für Updates nutzt stackctl `git pull --ff-only`, damit keine impliziten Merge-Commits entstehen.
 

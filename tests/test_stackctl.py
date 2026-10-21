@@ -10,6 +10,7 @@ import yaml
 from stackctl.cli import main
 from stackctl.install import clone, install
 from stackctl.k8s import CHART_DIR, K8sRunner
+from stackctl.repo_status import repo_checkout
 from stackctl.spec import Project, SpecError, build_stack, deep_merge
 
 SPEC = {
@@ -481,3 +482,105 @@ def test_install_still_clones_missing_siblings(tmp_path, monkeypatch):
         [sys.executable, "-m", "pip", "install", "--quiet", "-e", str(tmp_path / "sibling")],
         [sys.executable, "-m", "pip", "install", "--quiet", "-e", f"{project.root}[dev]"],
     ]
+
+
+def _checkout_repos(tmp_path, monkeypatch):
+    monkeypatch.delenv("STACKCTL_SRC_DIR", raising=False)
+    source = _clone_source(tmp_path)
+    root = tmp_path / "demo"
+    sibling = tmp_path / "custom-path"
+    for path in (root, sibling):
+        subprocess.run(["git", "clone", "--quiet", str(source), str(path)], check=True)
+    return Project(root, {"siblings": [{"name": "sibling", "path": "custom-path", "branch": "main"}]})
+
+
+def _branch(path):
+    return subprocess.run(["git", "-C", str(path), "branch", "--show-current"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_checkout_cli_switches_all_repos_and_tracks_remote(tmp_path, monkeypatch, capsys):
+    project = _checkout_repos(tmp_path, monkeypatch)
+    sibling = tmp_path / "custom-path"
+    # Keep an existing local branch; only the sibling needs a new tracking branch.
+    subprocess.run(["git", "-C", str(project.root), "branch", "devel"], check=True)
+    (project.root / "pyproject.toml").write_text(dedent("""
+        [tool.stackctl]
+        config_loader = "nonexistent_module:load_config"
+        [[tool.stackctl.siblings]]
+        name = "sibling"
+        path = "custom-path"
+        branch = "main"
+    """))
+    with (project.root / ".git/info/exclude").open("a") as exclude:
+        exclude.write("\npyproject.toml\n")
+    monkeypatch.chdir(project.root)
+    assert main(["checkout", "devel"]) == 0
+    assert _branch(project.root) == _branch(sibling) == "devel"
+    upstream = subprocess.run(["git", "-C", str(sibling), "rev-parse", "--abbrev-ref", "@{upstream}"],
+                              capture_output=True, text=True, check=True)
+    assert upstream.stdout.strip() == "origin/devel"
+    (sibling / "content.txt").write_text("local change\n")
+    assert main(["checkout", "devel"]) == 0
+    assert (sibling / "content.txt").read_text() == "local change\n"
+    out = capsys.readouterr().out
+    assert "ausgecheckt" in out and "bereits auf Branch" in out
+
+
+@pytest.mark.parametrize("dirty_file", ["content.txt", "untracked.txt"])
+def test_checkout_skips_dirty_repos_and_continues(tmp_path, monkeypatch, capsys, dirty_file):
+    project = _checkout_repos(tmp_path, monkeypatch)
+    (project.root / dirty_file).write_text("local change\n")
+    assert repo_checkout(project, "devel") == 1
+    assert _branch(project.root) == "main"
+    assert _branch(tmp_path / "custom-path") == "devel"
+    assert (project.root / dirty_file).read_text() == "local change\n"
+    assert "dirty" in capsys.readouterr().out
+
+
+def test_checkout_reports_missing_repos_and_branches_and_continues(tmp_path, monkeypatch, capsys):
+    project = _checkout_repos(tmp_path, monkeypatch)
+    sibling = tmp_path / "custom-path"
+    subprocess.run(["git", "-C", str(sibling), "branch", "only-local"], check=True)
+    (tmp_path / "not-git").mkdir()
+    project.tool["siblings"].extend([{"name": "missing"}, {"name": "not-git"}])
+    assert repo_checkout(project, "only-local") == 1
+    assert _branch(project.root) == "main"
+    assert _branch(sibling) == "only-local"
+    out = capsys.readouterr().out
+    assert "fehlgeschlagen" in out
+    assert "fehlt" in out
+    assert "kein git repo" in out
+    assert "ausgecheckt" in out
+
+
+def test_checkout_continues_after_fetch_failure(tmp_path, monkeypatch, capsys):
+    project = _checkout_repos(tmp_path, monkeypatch)
+    run = subprocess.run
+
+    def fail_fetch(command, **kwargs):
+        if command[:2] == ["git", "fetch"] and kwargs.get("cwd") == project.root:
+            return subprocess.CompletedProcess(command, 1, "", "fetch unavailable")
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_fetch)
+    assert repo_checkout(project, "devel") == 1
+    assert _branch(project.root) == "main"
+    assert _branch(tmp_path / "custom-path") == "devel"
+    assert "fetch unavailable" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("branch", ["bad..name", "HEAD", "refs/../devel", "@{-1}"])
+def test_checkout_rejects_invalid_branch_before_changes(tmp_path, monkeypatch, capsys, branch):
+    project = _checkout_repos(tmp_path, monkeypatch)
+    with pytest.raises(SpecError, match="Ungültiger Branchname"):
+        repo_checkout(project, branch)
+    assert _branch(project.root) == _branch(tmp_path / "custom-path") == "main"
+
+
+@pytest.mark.parametrize("branches", [[], ["devel", "main"]])
+def test_checkout_requires_exactly_one_branch(branches, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["checkout", *branches])
+    assert exc.value.code == 2
+    assert "genau einen Branch" in capsys.readouterr().err

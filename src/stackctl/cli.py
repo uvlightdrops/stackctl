@@ -1,6 +1,6 @@
 """stackctl [--target local|minikube|k8s] ACTION [SERVICE ...]
 
-Actions: status, start, stop, restart, logs [-f], clone, install, delete (k8s only), spec.
+Actions: status, start, stop, restart, logs [-f], clone, checkout BRANCH, install, delete (k8s only), spec.
 The target defaults to ``stack.target`` of the project config (set per stage).
 """
 
@@ -13,21 +13,25 @@ import yaml
 
 from .install import clone, install
 from .local import LocalRunner
-from .repo_status import repo_pull, repo_push, repo_status
+from .repo_status import repo_checkout, repo_pull, repo_push, repo_status
 from .spec import TARGETS, SpecError, build_stack, find_project, load_raw_spec
 
-ACTIONS = ("status", "start", "stop", "restart", "logs", "clone", "install", "delete", "spec", "repo-status", "pull", "push")
+ACTIONS = ("status", "start", "stop", "restart", "logs", "clone", "checkout", "install", "delete", "spec", "repo-status", "pull", "push")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="stackctl", description="Stack lokal, auf minikube oder k8s betreiben")
     parser.add_argument("action", choices=ACTIONS, nargs="?", default="status")
-    parser.add_argument("services", nargs="*", help="Dienste (Standard: alle bzw. alle verwalteten)")
+    parser.add_argument("services", nargs="*", help="Dienste (Standard: alle bzw. alle verwalteten); checkout: Branch")
     parser.add_argument("-t", "--target", choices=TARGETS, help="Standard: stack.target aus der Konfiguration")
     parser.add_argument("-f", "--follow", action="store_true", help="logs: fortlaufend anzeigen")
     args = parser.parse_args(argv)
+    if args.action == "checkout" and len(args.services) != 1:
+        parser.error("checkout benötigt genau einen Branch, z.B. stackctl checkout devel")
     try:
         project = find_project()
+        if args.action == "checkout":
+            return repo_checkout(project, args.services[0])
         if args.action == "clone":
             return clone(project)
         if args.action == "install":

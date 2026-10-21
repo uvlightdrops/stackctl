@@ -4,7 +4,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .spec import Project
+from .spec import Project, SpecError
 
 
 @dataclass(frozen=True)
@@ -89,10 +89,41 @@ def repo_push(project: Project) -> int:
     return code
 
 
+def repo_checkout(project: Project, branch: str) -> int:
+    valid = subprocess.run(["git", "check-ref-format", f"refs/heads/{branch}"],
+                           capture_output=True, text=True)
+    if branch == "HEAD" or branch.startswith("-") or valid.returncode:
+        raise SpecError(f"Ungültiger Branchname: {branch}")
+    results: list[tuple[str, ...]] = []
+    code = 0
+    for name, path in _repo_paths(project):
+        try:
+            row = _collect(name, path)
+            if row.error:
+                results.append((name, "Fehler", row.error))
+                code = 1
+            elif row.branch == branch:
+                results.append((name, "bereits auf Branch", branch))
+            elif row.dirty:
+                results.append((name, "übersprungen", "dirty"))
+                code = 1
+            else:
+                _git(path, "switch", "--guess", "--", branch)
+                results.append((name, "ausgecheckt", branch))
+        except (RuntimeError, OSError) as exc:
+            results.append((name, "Fehler", " ".join(str(exc).splitlines())))
+            code = 1
+    _print_table(("REPOSITORY", "STATUS", "DETAILS"), results)
+    return code
+
+
+def _repo_paths(project: Project) -> list[tuple[str, Path]]:
+    return [(project.root.name, project.root),
+            *((sibling.name, project.sibling_path(sibling)) for sibling in project.siblings)]
+
+
 def collect_repos(project: Project) -> list[RepoStatus]:
-    rows = [_collect(project.root.name, project.root)]
-    rows.extend(_collect(sibling.name, project.sibling_path(sibling)) for sibling in project.siblings)
-    return rows
+    return [_collect(name, path) for name, path in _repo_paths(project)]
 
 
 def _collect(name: str, path: Path) -> RepoStatus:
