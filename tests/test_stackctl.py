@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from stackctl.cli import main
+from stackctl.install import clone, install
 from stackctl.k8s import CHART_DIR, K8sRunner
 from stackctl.spec import Project, SpecError, build_stack, deep_merge
 
@@ -368,3 +369,115 @@ def test_push_updates_only_clean_repos_that_are_ahead(tmp_path, monkeypatch, cap
     assert len({len(line) for line in summary.splitlines()}) == 1
     assert "ok" in out
     assert "behind" in out
+
+
+def _clone_source(tmp_path):
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(source)], check=True)
+    (source / "content.txt").write_text("original\n")
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                    "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "initial"], check=True)
+    subprocess.run(["git", "-C", str(source), "branch", "devel"], check=True)
+    return source
+
+
+def test_clone_cli_clones_missing_repos_without_loading_stack(tmp_path, monkeypatch, capsys):
+    source = _clone_source(tmp_path)
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(dedent(f"""
+        [tool.stackctl]
+        config_loader = "nonexistent_module:load_config"
+        src_dir = "{tmp_path / 'unused'}"
+
+        [[tool.stackctl.siblings]]
+        name = "default"
+        url = "{source}"
+
+        [[tool.stackctl.siblings]]
+        name = "custom"
+        path = "nested/custom-path"
+        url = "{source}"
+        branch = "devel"
+    """))
+    destination = tmp_path / "repos"
+    monkeypatch.setenv("STACKCTL_SRC_DIR", str(destination))
+    monkeypatch.chdir(root)
+    assert main(["clone"]) == 0
+    for path, branch in [(destination / "default", "main"), (destination / "nested/custom-path", "devel")]:
+        assert (path / "content.txt").read_text() == "original\n"
+        result = subprocess.run(["git", "-C", str(path), "branch", "--show-current"],
+                                capture_output=True, text=True, check=True)
+        assert result.stdout.strip() == branch
+    (destination / "default/content.txt").write_text("local change\n")
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("Existing repositories must not run git or pip")
+
+    monkeypatch.setattr(subprocess, "call", unexpected_call)
+    assert main(["clone"]) == 0
+    assert (destination / "default/content.txt").read_text() == "local change\n"
+    assert "bereits vorhanden" in capsys.readouterr().out
+    assert not (tmp_path / "unused").exists()
+
+
+def test_clone_reports_errors_and_continues(tmp_path, monkeypatch, capfd):
+    source = _clone_source(tmp_path)
+    monkeypatch.delenv("STACKCTL_SRC_DIR", raising=False)
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "keep.txt").write_text("keep\n")
+    (tmp_path / "file").write_text("keep\n")
+    (tmp_path / "broken-link").symlink_to(tmp_path / "absent")
+    project = Project(tmp_path / "demo", {"siblings": [
+        {"name": "missing-url"},
+        {"name": "occupied", "url": str(source)},
+        {"name": "file", "url": str(source)},
+        {"name": "broken-link", "url": str(source)},
+        {"name": "invalid", "url": str(tmp_path / "no-remote")},
+        {"name": "valid", "url": str(source)},
+    ]})
+    assert clone(project) == 1
+    assert (tmp_path / "valid/content.txt").read_text() == "original\n"
+    assert (occupied / "keep.txt").read_text() == "keep\n"
+    assert (tmp_path / "file").read_text() == "keep\n"
+    assert (tmp_path / "broken-link").is_symlink()
+    err = capfd.readouterr().err
+    assert "keine url angegeben" in err
+    assert err.count("kein git repo") == 3
+    assert "no-remote" in err
+
+
+def test_clone_reports_os_errors(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("STACKCTL_SRC_DIR", raising=False)
+    (tmp_path / "blocked").write_text("file\n")
+    project = Project(tmp_path / "demo", {"siblings": [
+        {"name": "blocked", "path": "blocked/repo", "url": "https://example.invalid/repo.git"},
+    ]})
+    assert clone(project) == 1
+    assert "fehlgeschlagen" in capsys.readouterr().err
+
+
+def test_install_still_clones_missing_siblings(tmp_path, monkeypatch):
+    monkeypatch.delenv("STACKCTL_SRC_DIR", raising=False)
+    monkeypatch.delenv("STACKCTL_EXTRAS", raising=False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "venv"))
+    project = Project(tmp_path / "demo", {"extras": "dev", "siblings": [
+        {"name": "sibling", "url": "https://example.invalid/sibling.git", "branch": "devel"},
+    ]})
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0))
+
+    def fake_call(command):
+        calls.append(command)
+        return 0
+
+    monkeypatch.setattr(subprocess, "call", fake_call)
+    assert install(project) == 0
+    assert calls == [
+        ["git", "clone", "--quiet", "--branch", "devel", "--",
+         "https://example.invalid/sibling.git", str(tmp_path / "sibling")],
+        [sys.executable, "-m", "pip", "install", "--quiet", "-e", str(tmp_path / "sibling")],
+        [sys.executable, "-m", "pip", "install", "--quiet", "-e", f"{project.root}[dev]"],
+    ]

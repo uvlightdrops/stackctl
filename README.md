@@ -16,6 +16,7 @@ stackctl -t minikube start         # Images bauen und laden, dann helm upgrade -
 stackctl -t minikube status        # pods/svc/pvc + URLs
 stackctl -t k8s start              # Images in die Registry pushen, dann deployen
 stackctl -t minikube delete        # Release und Namespace entfernen (PVCs gehen mit dem Namespace)
+stackctl clone                     # fehlende Geschwister-Repos klonen, ohne Installation
 stackctl install                   # Geschwister-Repos klonen + editable installieren, dann das Projekt
 stackctl spec                      # aufgelöste Spec anzeigen
 stackctl repo-status               # Hauptprojekt + siblings: Branch, Commits, ahead/behind, dirty
@@ -44,12 +45,14 @@ config_key = "stack"                     # Abschnitt mit der Spec
 [[tool.stackctl.siblings]]
 name = "ki-core"
 url = "https://github.com/org/ki-core.git"
-# branch = "devel"                # optional: nur für stackctl install / git clone
+# branch = "devel"                # optional: beim Klonen durch stackctl clone / install
 
 [[tool.stackctl.siblings]]
 name = "yaml-cfg-wizard"          # Anzeigename / Repo-Gruppe
 path = "yaml_cfg_wizard"          # Ordnername unter src_dir, falls abweichend
 ```
+
+`stackctl clone` klont alle noch fehlenden `siblings` nach `src_dir` (bzw. `STACKCTL_SRC_DIR`), mit `path` oder sonst `name` als Ordnername. Fehlende Elternverzeichnisse werden angelegt. Die `url` ist nur für fehlende Repos erforderlich; ohne `branch` wird der Standard-Branch des Remotes verwendet. Vorhandene Git-Repos bleiben unverändert: kein Fetch, Pull oder Branchwechsel. Existierende Pfade ohne Git-Repo, fehlende URLs und Git-Fehler werden gemeldet; die übrigen Repos werden trotzdem bearbeitet, der Exit-Code ist dann ungleich null. Der Befehl braucht weder eine aktive venv noch eine ladbare Stack-Konfiguration und installiert keine Pakete. Aufruf im bereits vorhandenen Hauptprojekt mit `[tool.stackctl]` in der `pyproject.toml`.
 
 `stackctl repo-status` prüft das aktuelle Projekt und alle `siblings`. Dafür wird pro Repo `git fetch --all --prune` ausgeführt; die Ausgabe zeigt in einer Tabelle lokalen Branch, `HEAD`, Upstream, Remote-Commit, Ahead/Behind-Commits und ob das Worktree dirty ist. Ein positiver Behind-Wert zeigt, dass im Remote neue Commits vorhanden sind; ein positiver Ahead-Wert zeigt lokale Commits, die noch nicht gepusht wurden.
 

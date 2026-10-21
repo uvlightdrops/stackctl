@@ -6,7 +6,37 @@ import os
 import subprocess
 import sys
 
-from .spec import Project
+from .spec import Project, Sibling
+
+
+def _clone_sibling(project: Project, sibling: Sibling) -> int:
+    path = project.sibling_path(sibling)
+    if path.exists() or path.is_symlink():
+        if path.is_dir() and (path / ".git").exists():
+            print(f"  {sibling.name}: bereits vorhanden in {path}")
+            return 0
+        print(f"  {sibling.name}: {path} existiert, ist aber kein git repo", file=sys.stderr)
+        return 1
+    if not sibling.url:
+        print(f"  {sibling.name}: fehlt in {path} und keine url angegeben", file=sys.stderr)
+        return 1
+    print(f"  {sibling.name}: klone {sibling.branch or 'Standard-Branch'} nach {path}", flush=True)
+    branch = ["--branch", sibling.branch] if sibling.branch else []
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return subprocess.call(["git", "clone", "--quiet", *branch, "--", sibling.url, str(path)])
+    except OSError as exc:
+        print(f"  {sibling.name}: Klonen nach {path} fehlgeschlagen: {exc}", file=sys.stderr)
+        return 1
+
+
+def clone(project: Project) -> int:
+    """Clone missing sibling repos without installing packages or changing existing repos."""
+    code = 0
+    for sibling in project.siblings:
+        if _clone_sibling(project, sibling):
+            code = 1
+    return code
 
 
 def install(project: Project) -> int:
@@ -18,12 +48,7 @@ def install(project: Project) -> int:
     for sibling in project.siblings:
         path = project.sibling_path(sibling)
         if not path.is_dir():
-            if not sibling.url:
-                print(f"  {sibling.name}: fehlt in {path} und keine url angegeben")
-                return 1
-            print(f"  {sibling.name}: klone {sibling.branch or 'Standard-Branch'} nach {path}", flush=True)
-            branch = ["--branch", sibling.branch] if sibling.branch else []
-            if subprocess.call(["git", "clone", "--quiet", *branch, sibling.url, str(path)]):
+            if _clone_sibling(project, sibling):
                 return 1
         print(f"  {sibling.name}: pip install -e {path}", flush=True)
         if subprocess.call([*pip, "-e", str(path)]):

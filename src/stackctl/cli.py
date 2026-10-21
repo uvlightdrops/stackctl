@@ -1,6 +1,6 @@
 """stackctl [--target local|minikube|k8s] ACTION [SERVICE ...]
 
-Actions: status, start, stop, restart, logs [-f], install, delete (k8s only), spec.
+Actions: status, start, stop, restart, logs [-f], clone, install, delete (k8s only), spec.
 The target defaults to ``stack.target`` of the project config (set per stage).
 """
 
@@ -11,12 +11,12 @@ import sys
 
 import yaml
 
-from .install import install
+from .install import clone, install
 from .local import LocalRunner
 from .repo_status import repo_pull, repo_push, repo_status
 from .spec import TARGETS, SpecError, build_stack, find_project, load_raw_spec
 
-ACTIONS = ("status", "start", "stop", "restart", "logs", "install", "delete", "spec", "repo-status", "pull", "push")
+ACTIONS = ("status", "start", "stop", "restart", "logs", "clone", "install", "delete", "spec", "repo-status", "pull", "push")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -28,6 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         project = find_project()
+        if args.action == "clone":
+            return clone(project)
         if args.action == "install":
             return install(project)  # before the project (and its config loader) is installed
         if args.action == "repo-status":
