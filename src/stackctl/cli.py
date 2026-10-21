@@ -11,12 +11,12 @@ import sys
 
 import yaml
 
-from .install import clone, install
+from .install import clone, install, normalize_paths
 from .local import LocalRunner
 from .repo_status import repo_checkout, repo_pull, repo_push, repo_status
 from .spec import TARGETS, SpecError, build_stack, find_project, load_raw_spec
 
-ACTIONS = ("status", "start", "stop", "restart", "logs", "clone", "checkout", "install", "delete", "spec", "repo-status", "pull", "push")
+ACTIONS = ("status", "start", "stop", "restart", "logs", "clone", "checkout", "install", "normalize", "delete", "spec", "repo-status", "pull", "push")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
             return clone(project)
         if args.action == "install":
             return install(project)  # before the project (and its config loader) is installed
+        if args.action == "normalize":
+            return normalize_paths(project)
         if args.action == "repo-status":
             return repo_status(project)
         if args.action == "pull":

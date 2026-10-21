@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 
+from .normalize import normalize as normalize_paths
 from .spec import Project, Sibling
 
 
@@ -56,4 +57,9 @@ def install(project: Project) -> int:
     extras = (os.getenv("STACKCTL_EXTRAS") or project.tool.get("extras") or "").strip()
     target = f"{project.root}[{extras}]" if extras else str(project.root)
     print(f"  {project.root.name}: pip install -e {target}", flush=True)
-    return subprocess.call([*pip, "-e", target])
+    if subprocess.call([*pip, "-e", target]):
+        return 1
+    
+    # Normalize file:// URLs to relative paths after successful installation
+    print("Normalisiere Pfade in pyproject.toml...", flush=True)
+    return normalize_paths(project)
