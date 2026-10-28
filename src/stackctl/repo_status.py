@@ -160,11 +160,11 @@ def _git(path: Path, *args: str, check: bool = True) -> str:
 
 
 def _print(rows: list[RepoStatus]) -> None:
-    headers = ("NAME", "BRANCH", "LOCAL", "UPSTREAM", "REMOTE", "AHEAD/BEHIND", "DIRTY", "STATUS", "PATH")
+    headers = ("NAME", "BRANCH", "LOCAL", "REMOTE", "AHEAD/BEHIND", "DIRTY", "STATUS")
     data: list[tuple[str, ...]] = []
     for row in rows:
         if row.error:
-            data.append((row.name, "-", "-", "-", "-", "-", "-", row.error, str(row.path)))
+            data.append((row.name, "-", "-", "-", "-", "-", row.error))
             continue
         dirty = "yes" if row.dirty else "no"
         sync = f"{row.ahead}/{row.behind}" if row.upstream != "-" else "-"
@@ -178,7 +178,7 @@ def _print(rows: list[RepoStatus]) -> None:
             state = "ahead"
         else:
             state = "ok"
-        data.append((row.name, row.branch, row.head, row.upstream, row.upstream_head, sync, dirty, state, str(row.path)))
+        data.append((row.name, row.branch, row.head, row.upstream_head, sync, dirty, state))
     _print_table(headers, data)
 
 
