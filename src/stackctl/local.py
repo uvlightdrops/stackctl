@@ -3,17 +3,120 @@
 from __future__ import annotations
 
 import os
+import select
 import shutil
 import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
+from threading import Thread
 
 from .spec import Project, Service, Stack
 
 START_TIMEOUT = 60
+
+# ANSI color codes for log prefixes
+COLORS = [
+    "\033[36m",  # cyan
+    "\033[33m",  # yellow
+    "\033[32m",  # green
+    "\033[35m",  # magenta
+    "\033[34m",  # blue
+    "\033[31m",  # red
+]
+RESET = "\033[0m"
+
+
+class LogAggregator:
+    """Aggregates and displays logs from multiple services with timestamps and colors."""
+    
+    def __init__(self, log_files: dict[str, Path]) -> None:
+        """Initialize with service name -> log file path mapping."""
+        self.log_files = log_files
+        self.service_colors: dict[str, str] = {}
+        self.file_positions: dict[str, int] = {}
+        
+        # Assign stable colors to services
+        for i, service_name in enumerate(sorted(log_files.keys())):
+            self.service_colors[service_name] = COLORS[i % len(COLORS)]
+            # Start from end of existing log
+            log_path = log_files[service_name]
+            if log_path.exists():
+                self.file_positions[service_name] = log_path.stat().st_size
+            else:
+                self.file_positions[service_name] = 0
+    
+    def tail_logs(self, follow: bool = False) -> None:
+        """Tail logs from all services with real-time updates."""
+        if not self.log_files:
+            print("Keine Logs vorhanden")
+            return
+        
+        try:
+            # Initial read: show last 40 lines from each file
+            for service_name, log_path in sorted(self.log_files.items()):
+                if log_path.exists():
+                    self._print_new_lines(service_name, log_path, initial=True)
+            
+            if not follow:
+                return
+            
+            # Real-time monitoring
+            print(f"\n{RESET}– Live-Modus (Ctrl+C zum Beenden) –\n")
+            
+            while True:
+                any_new = False
+                for service_name, log_path in sorted(self.log_files.items()):
+                    if log_path.exists():
+                        if self._print_new_lines(service_name, log_path):
+                            any_new = True
+                
+                if not any_new:
+                    time.sleep(0.5)
+        except KeyboardInterrupt:
+            print(f"\n{RESET}Logs beendet")
+    
+    def _print_new_lines(self, service_name: str, log_path: Path, initial: bool = False) -> bool:
+        """Print new lines from log file. Returns True if new lines were printed."""
+        try:
+            current_size = log_path.stat().st_size
+            prev_pos = self.file_positions.get(service_name, 0)
+            
+            if current_size < prev_pos:
+                # Log was rotated/truncated
+                prev_pos = 0
+            
+            if current_size <= prev_pos:
+                return False
+            
+            with log_path.open("r", encoding="utf-8", errors="replace") as f:
+                f.seek(prev_pos)
+                content = f.read()
+                self.file_positions[service_name] = f.tell()
+            
+            if not content:
+                return False
+            
+            color = self.service_colors[service_name]
+            prefix = f"{color}[{service_name:12s}]{RESET}"
+            
+            if initial:
+                # Show last 40 lines for initial display
+                lines = content.splitlines()
+                lines = lines[-40:] if len(lines) > 40 else lines
+                content = "\n".join(lines)
+            
+            # Add timestamp and service prefix to each line
+            for line in content.splitlines():
+                timestamp = time.strftime("%H:%M:%S")
+                print(f"{prefix} {timestamp}  {line}")
+            
+            return True
+        except (OSError, UnicodeDecodeError):
+            return False
 
 
 class LocalRunner:
@@ -52,6 +155,20 @@ class LocalRunner:
         if not self.port_open(service):
             return False
         return self.http_ok(service.url) if service.health_path else True
+    
+    def wait_for_ready(self, service: Service) -> bool:
+        """Wait for service to be healthy with configurable retries and interval."""
+        deadline = time.monotonic() + service.health_timeout
+        attempt = 0
+        
+        while attempt < service.health_retries and time.monotonic() < deadline:
+            if self.up(service):
+                return True
+            attempt += 1
+            if attempt < service.health_retries:
+                time.sleep(service.health_interval)
+        
+        return False
 
     def read_pid(self, service: Service) -> int | None:
         try:
@@ -93,7 +210,8 @@ class LocalRunner:
 
     def stop(self, names: list[str]) -> int:
         ok = True
-        for service in reversed(self.stack.select(names, [n for n, s in self.stack.services.items() if s.managed])):
+        services = self.stack.select(names, [n for n, s in self.stack.services.items() if s.managed])
+        for service in reversed(services):
             ok = self.stop_service(service) and ok
         return 0 if ok else 1
 
@@ -105,11 +223,16 @@ class LocalRunner:
 
     def logs(self, names: list[str], follow: bool) -> int:
         services = self.stack.select(names, [n for n, s in self.stack.services.items() if s.managed])
-        files = [str(self.log_file(s)) for s in services if self.log_file(s).exists()]
-        if not files:
+        log_files = {s.name: self.log_file(s) for s in services}
+        existing = {name: path for name, path in log_files.items() if path.exists()}
+        
+        if not existing:
             print("Noch keine Logs (nur für hier gestartete Dienste).")
             return 1
-        return subprocess.call(["tail", "-n", "40", *(["-F"] if follow else []), *files])
+        
+        aggregator = LogAggregator(existing)
+        aggregator.tail_logs(follow=follow)
+        return 0
 
     # --- start -----------------------------------------------------------------------
 
@@ -192,7 +315,7 @@ class LocalRunner:
     def _wait(self, service: Service, process: subprocess.Popen | None = None) -> bool:
         deadline = time.monotonic() + START_TIMEOUT
         while time.monotonic() < deadline:
-            if self.up(service):
+            if self.wait_for_ready(service):
                 return True
             if process is not None and process.poll() is not None:
                 return False

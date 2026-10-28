@@ -118,6 +118,10 @@ class Service:
     marker: str = ""
     compose: dict[str, Any] = field(default_factory=dict)
     k8s: dict[str, Any] | None = None
+    depends_on: list[str] = field(default_factory=list)
+    health_timeout: int = 5
+    health_retries: int = 3
+    health_interval: float = 0.5
 
     @property
     def probe_host(self) -> str:
@@ -148,11 +152,69 @@ class Stack:
             raise SpecError(f"Unbekannter Dienst: {name} (verfügbar: {', '.join(self.services)})") from None
 
     def select(self, names: list[str], default: list[str] | None = None) -> list[Service]:
-        """Services in spec order (start order)."""
+        """Services in dependency-respecting start order, including all transitive dependencies."""
         wanted = set(names or (default if default is not None else self.services))
         for name in wanted:
             self.service(name)
-        return [service for name, service in self.services.items() if name in wanted]
+        
+        # Expand wanted to include all transitive dependencies
+        expanded = self._expand_dependencies(wanted)
+        
+        # Validate and compute topological sort
+        ordered = self._topological_sort(expanded)
+        return ordered
+    
+    def _expand_dependencies(self, wanted: set[str]) -> set[str]:
+        """Expand a set of service names to include all transitive dependencies."""
+        expanded = set(wanted)
+        to_process = list(wanted)
+        
+        while to_process:
+            name = to_process.pop()
+            service = self.service(name)
+            for dep in service.depends_on:
+                if dep not in expanded:
+                    expanded.add(dep)
+                    to_process.append(dep)
+        
+        return expanded
+    
+    def _topological_sort(self, wanted: set[str]) -> list[Service]:
+        """Compute start order respecting depends_on, with circular dependency detection."""
+        # Validate all dependencies exist
+        for name in wanted:
+            service = self.service(name)
+            for dep in service.depends_on:
+                if dep not in self.services:
+                    raise SpecError(f"{name}: depends_on nennt unbekannten Dienst '{dep}'")
+        
+        # Topological sort using DFS - only visit nodes in wanted set
+        visited: set[str] = set()
+        visiting: set[str] = set()
+        ordered: list[str] = []
+        
+        def visit(name: str) -> None:
+            if name in visited:
+                return
+            if name in visiting:
+                raise SpecError(f"Zirkuläre Abhängigkeit erkannt: {name}")
+            
+            visiting.add(name)
+            service = self.service(name)
+            
+            # Visit dependencies first (only those in wanted)
+            for dep in service.depends_on:
+                if dep in wanted:
+                    visit(dep)
+            
+            visiting.remove(name)
+            visited.add(name)
+            ordered.append(name)
+        
+        for name in wanted:
+            visit(name)
+        
+        return [self.service(name) for name in ordered]
 
 
 class _Ref:
@@ -220,6 +282,11 @@ def build_stack(raw: dict[str, Any], root: Path, target: str | None = None) -> S
         ref = refs[name]
         context = {**base, "name": name, "host": ref.host, "port": ref.port, "probe_host": ref.probe_host}
         k8s = item.get("k8s")
+        depends_on = list(item.get("depends_on") or [])
+        health_timeout = int(item.get("health_timeout", 5))
+        health_retries = int(item.get("health_retries", 3))
+        health_interval = float(item.get("health_interval", 0.5))
+        
         services[name] = Service(
             name=name,
             kind=kind,
@@ -233,6 +300,10 @@ def build_stack(raw: dict[str, Any], root: Path, target: str | None = None) -> S
             marker=str(item.get("marker", "")),
             compose=dict(item.get("compose") or {}),
             k8s=render(dict(k8s), context) if isinstance(k8s, dict) else None,
+            depends_on=depends_on,
+            health_timeout=health_timeout,
+            health_retries=health_retries,
+            health_interval=health_interval,
         )
     return Stack(
         name=str(raw.get("name") or root.name),

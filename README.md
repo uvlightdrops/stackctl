@@ -123,6 +123,97 @@ Geschweifte Klammern als Text schreibt man `{{ }}`. Kubernetes-Referenzen wie `$
 
 **Images:** Der Build-Kontext enthält nur die Dateien, die git sieht. Geschwister-Repos werden als `--build-context <name>=…` übergeben, im Dockerfile also `COPY --from=<name> . /src/<name>`. Der Tag ist die Image-ID, damit lösen neue Builds automatisch einen Rollout aus.
 
+### Service-Abhängigkeiten (depends_on)
+
+Dienste können Abhängigkeiten untereinander deklarieren. `stackctl` beachtet diese beim Starten und Stoppen:
+
+```yaml
+services:
+  db:
+    kind: compose
+    port: 5432
+    compose: {dir: deploy/postgres, service: postgres}
+
+  cache:
+    kind: compose
+    port: 6379
+    depends_on: []
+    compose: {dir: deploy/redis, service: redis}
+
+  api:
+    host: 0.0.0.0
+    port: 8090
+    health_path: /docs
+    depends_on: [db, cache]  # db und cache müssen zuerst starten
+    command: ["{python}", -m, uvicorn, app:app, --host, "{host}", --port, "{port}"]
+    env:
+      DB_HOST: "{services[db].probe_host}"
+      CACHE_HOST: "{services[cache].probe_host}"
+
+  worker:
+    port: 0
+    depends_on: [api, cache]  # Nach api und cache starten
+    command: ["{python}", -m, celery, worker]
+    env:
+      CELERY_BROKER_URL: "redis://{services[cache].probe_host}:{services[cache].port}/0"
+```
+
+**Regeln:**
+- `depends_on` ist eine optionale Liste von Dienst-Namen
+- `stackctl start` sortiert Dienste nach ihren Abhängigkeiten topologisch und startet sie in dieser Reihenfolge
+- `stackctl stop` verwendet die **umgekehrte** Reihenfolge (abhängige zuerst, dann ihre Abhängigkeiten)
+- Zirkuläre Abhängigkeiten werden erkannt und führen zu einem Fehler
+- Ungültige Referenzen werden abgelehnt
+
+### Health Checks und Startup-Verhalten
+
+Pro Dienst lassen sich Gesundheitschecks konfigurieren:
+
+```yaml
+services:
+  api:
+    host: 0.0.0.0
+    port: 8090
+    health_path: /docs
+    health_timeout: 5              # Timeout insgesamt in Sekunden (Standard: 5)
+    health_retries: 10             # Maximale Versuche (Standard: 3)
+    health_interval: 0.5           # Wartezeit zwischen Versuchen in Sekunden (Standard: 0.5)
+    command: ["{python}", -m, uvicorn, app:app, --host, "{host}", --port, "{port}"]
+```
+
+**Verhalten:**
+- Wenn `health_path` gesetzt ist, wartet stackctl nach dem Start auf einen HTTP-GET zum Service (Status < 500)
+- Wenn `health_path` leer ist, wartet stackctl nur auf offene Port (TCP-Verbindung)
+- `health_retries` und `health_interval` steuern den Wiederholungsablauf
+- Nach `health_timeout` Sekunden bricht stackctl ab, falls der Service nicht antwortet
+- Abhängige Services starten erst, wenn ihre Abhängigkeiten healthy sind
+
+### Unified Log Streaming
+
+```bash
+stackctl logs                      # Logs aller verwalteten Dienste (Standard: tail -n 40)
+stackctl logs -f                   # Follow: live-Modus, fortlaufend anzeigen
+stackctl logs api worker           # Nur bestimmte Dienste
+stackctl logs -f api               # Nur api, Follow-Modus
+```
+
+**Features:**
+- Zeigt Logs mit Zeitstempel und Service-Namen-Präfix
+- Jeder Dienst bekommt eine stabile Farbe (cyan, gelb, grün, magenta, blau, rot)
+- Live-Modus `-f` folgt neuen Log-Einträgen in Echtzeit
+- Logs nur für lokal gestartete Prozesse (nicht für `external` oder entfernte Services)
+- Tastenkombi `Ctrl+C` stoppt die Log-Anzeige
+
+Beispiel-Output:
+```
+[db          ] 14:23:45  2024-10-28T12:51:29.954+01:00 database initialized
+[cache       ] 14:23:46  Connected to Redis on localhost:6379
+[api         ] 14:23:47  Uvicorn running on http://0.0.0.0:8090
+[worker      ] 14:23:47  [celery@hostname ready.]
+```
+
+Siehe auch `examples/stack-with-dependencies.yaml` für ein vollständiges Beispiel mit allen Features.
+
 ## Tests
 
 ```bash

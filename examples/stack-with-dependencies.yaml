@@ -1,0 +1,111 @@
+stack:
+  name: demo-with-dependencies
+  target: local
+  services:
+    db:
+      kind: compose
+      port: 5432
+      health_path: ""
+      health_timeout: 10
+      health_retries: 20
+      health_interval: 0.5
+      compose:
+        dir: deploy/postgres
+        service: postgres
+        requires: [deploy/postgres/.env]
+
+    cache:
+      kind: compose
+      port: 6379
+      health_timeout: 5
+      health_retries: 10
+      health_interval: 0.5
+      depends_on: []
+      compose:
+        dir: deploy/redis
+        service: redis
+
+    api:
+      host: 0.0.0.0
+      port: 8090
+      health_path: /docs
+      health_timeout: 5
+      health_retries: 10
+      health_interval: 0.5
+      depends_on:
+        - db
+        - cache
+      command: ["{python}", -m, uvicorn, app:app, --host, "{host}", --port, "{port}"]
+      prepare: ["{python}", manage.py, migrate]
+      post_start: ["{python}", seed.py]
+      env:
+        DB_HOST: "{services[db].probe_host}"
+        DB_PORT: "{services[db].port}"
+        CACHE_HOST: "{services[cache].probe_host}"
+        CACHE_PORT: "{services[cache].port}"
+      marker: app:app
+
+    worker:
+      host: 127.0.0.1
+      port: 0
+      health_timeout: 5
+      health_retries: 5
+      health_interval: 1.0
+      depends_on:
+        - api
+        - cache
+      command: ["{python}", -m, celery, -A, app, worker, -l, info]
+      env:
+        DB_HOST: "{services[db].probe_host}"
+        DB_PORT: "{services[db].port}"
+        CACHE_HOST: "{services[cache].probe_host}"
+        CACHE_PORT: "{services[cache].port}"
+        CELERY_BROKER_URL: "redis://{services[cache].probe_host}:{services[cache].port}/0"
+      marker: celery
+
+  targets:
+    minikube:
+      services:
+        db:
+          k8s:
+            image: pgvector/pgvector:pg16
+            secret_env: true
+            volumes:
+              pgdata:
+                mount: /var/lib/postgresql/data
+                size: 10Gi
+        cache:
+          k8s:
+            image: redis:7-alpine
+        api:
+          k8s:
+            expose: true
+            volumes:
+              data:
+                mount: /data
+                shared: true
+                size: 20Gi
+        worker:
+          k8s:
+            volumes:
+              data:
+                mount: /data
+                shared: true
+                size: 20Gi
+
+  k8s:
+    namespace: demo
+    images:
+      app:
+        dockerfile: deploy/docker/Dockerfile
+    env:
+      DATA_ROOT: /data
+    secret_env:
+      PG_USER: demo
+    secret_env_files: [deploy/postgres/.env]
+    secret_files: [creds.yaml]
+    minikube:
+      profile: demo
+      cpus: 4
+      memory: 8192
+      driver: docker
